@@ -49,7 +49,7 @@ resource "aws_security_group" "eks_worker_group" {
 resource "aws_instance" "bastion" {
   ami                    = "ami-0c0d141edc4f470cc"  # Amazon Linux 2
   instance_type          = "t2.micro"
-  key_name               = "Bastion-key-pair"  (ssh-keygen -t rsa -b 2048 -f ~/.ssh/Bastion-key-pair) to generate the key pair
+  key_name               = "Bastion-key-pair"  #to generate the key pair (ssh-keygen -t rsa -b 2048 -f ~/.ssh/Bastion-key-pair)
   subnet_id              = element(module.vpc.public_subnets, 0)  # Place in the first public subnet
   associate_public_ip    = true
   security_group_ids     = [aws_security_group.eks_worker_group.id]
@@ -117,7 +117,7 @@ module "eks" {
       desired_capacity            = 3
       max_capacity                = 5
       instance_type               = "t2.micro"
-      key_name                    = "EKS-pair-name"  (ssh-keygen -t rsa -b 2048 -f ~/.ssh/EKS-key-pair) to generate the key pair
+      key_name                    = "EKS-pair-name"  #to generate the key pair(ssh-keygen -t rsa -b 2048 -f ~/.ssh/EKS-key-pair)
       additional_security_group_ids = [aws_security_group.eks_worker_group.id]
       iam_instance_profile        = aws_iam_instance_profile.eks_node_profile.name
     }
