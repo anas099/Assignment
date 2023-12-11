@@ -1,0 +1,146 @@
+# Assignment.tf
+
+provider "aws" {
+  region = "us-west-2"
+}
+
+# VPC module
+module "vpc" {
+  source = "terraform-aws-modules/vpc/aws"
+
+  name            = "my-vpc"
+  cidr            = "10.0.0.0/16"
+  azs             = ["us-west-2a", "us-west-2b", "us-west-2c"]
+
+  # Private subnets for EKS nodes
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+
+  # Public subnets for internet-facing resources
+  public_subnets = ["10.0.4.0/24", "10.0.5.0/24", "10.0.6.0/24"]
+
+  enable_nat_gateway = true
+}
+
+# Security Group for EKS worker nodes
+resource "aws_security_group" "eks_worker_group" {
+  name        = "eks-worker-group"
+  description = "Security group for EKS worker nodes"
+
+  vpc_id = module.vpc.vpc_id
+
+  # Inbound rules
+  ingress {
+    from_port   = 0
+    to_port     = 65535
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Outbound rules
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Bastion Host in Public Subnet
+resource "aws_instance" "bastion" {
+  ami                    = "ami-0c0d141edc4f470cc"  # Amazon Linux 2
+  instance_type          = "t2.micro"
+  key_name               = "Bastion-key-pair"  (ssh-keygen -t rsa -b 2048 -f ~/.ssh/Bastion-key-pair) to generate the key pair
+  subnet_id              = element(module.vpc.public_subnets, 0)  # Place in the first public subnet
+  associate_public_ip    = true
+  security_group_ids     = [aws_security_group.eks_worker_group.id]
+}
+
+# Create KMS Key for EKS Cluster Encryption
+resource "aws_kms_key" "eks_cluster_key" {
+  description             = "KMS key for EKS cluster encryption"
+  deletion_window_in_days = 7
+}
+
+# IAM Role for EKS Nodes
+resource "aws_iam_role" "eks_node_role" {
+  name = "eks-node-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
+
+# Attach IAM Policies for ECR Access
+resource "aws_iam_role_policy_attachment" "eks_node_ecr_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_node_role.name
+}
+
+# IAM Instance Profile
+resource "aws_iam_instance_profile" "eks_node_profile" {
+  name  = "eks-node-profile"
+  roles = [aws_iam_role.eks_node_role.name]
+}
+
+# ECR Repository
+resource "aws_ecr_repository" "my_ecr_repo" {
+  name = "my-ecr-repo"
+}
+
+# EKS module
+module "eks" {
+  source       = "terraform-aws-modules/eks/aws"
+
+  cluster_name = "my-eks-cluster"
+  subnets      = module.vpc.private_subnets_ids
+  vpc_id       = module.vpc.vpc_id
+
+  # Associate KMS key with EKS cluster
+  encryption_config = {
+    provider_key_arn = aws_kms_key.eks_cluster_key.arn
+  }
+
+  # EKS Node Group Configuration
+  node_groups = {
+    eks_nodes = {
+      desired_capacity            = 3
+      max_capacity                = 5
+      instance_type               = "t2.micro"
+      key_name                    = "EKS-pair-name"  (ssh-keygen -t rsa -b 2048 -f ~/.ssh/EKS-key-pair) to generate the key pair
+      additional_security_group_ids = [aws_security_group.eks_worker_group.id]
+      iam_instance_profile        = aws_iam_instance_profile.eks_node_profile.name
+    }
+  }
+}
+
+# Output the Security Group ID, KMS Key ID, and Subnet IDs for reference
+output "eks_worker_security_group_id" {
+  value = aws_security_group.eks_worker_group.id
+}
+
+output "eks_cluster_kms_key_id" {
+  value = aws_kms_key.eks_cluster_key.id
+}
+
+output "vpc_subnet_ids" {
+  value = module.vpc.all_subnet_ids
+}
+
+output "ecr_repository_url" {
+  value = aws_ecr_repository.my_ecr_repo.repository_url
+}
+
+output "bastion_public_ip" {
+  value = aws_instance.bastion.public_ip
+}
